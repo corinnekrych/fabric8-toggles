@@ -1,0 +1,7 @@
+{
+  "realm": "fabric8-test",
+  "auth-server-url": "http://keycloak-fabric8.192.168.64.4.xip.io/auth",
+  "ssl-required": "external",
+  "resource": "unleash-admin",
+  "public-client": true
+}
