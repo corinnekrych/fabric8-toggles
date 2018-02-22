@@ -19,61 +19,14 @@ passport.use(
                 // user can choose to not display any email, then use a default one as unleash required it
                 profile.emails.push(`${displayName}@unknown.com`);
             }
-
-            let githubOrg = process.env.GITHUB_ORG ? process.env.GITHUB_ORG : 'rhdt-toggles-test';
-            let githubOrgTeam = process.env.GITHUB_ORG_TEAM ? process.env.GITHUB_ORG : 'toggles-admin-test';
-
-            // Successful authentication, now check if the authenticated user is a member of the GH org/team
-            console.log(`Fetching teams on https://api.github.com/orgs/${githubOrg}/teams with access token ${accessToken}`);
-            request({
-                    url: `https://api.github.com/orgs/${githubOrg}/teams`,
-                    headers: {
-                        'User-Agent': 'toggles-admin',
-                        'Authorization': 'Bearer ' + accessToken
-                    }
-                },
-                function(error, response, body) {
-                    if (error) {
-                        console.error('access to GH org failed:', error);
-                        return done(error, null);
-                    } else if (response.statusCode != 200) {
-                        console.error('access to GH org failed: ', response.statusCode, response.body);
-                        return done(response.body, null);
-                    }
-                    console.log('access to GH org done. Server responded with:', response.body);
-                    let jsonBody = JSON.parse(response.body)
-                    jsonBody.forEach(team => {
-                        if (team.name == githubOrgTeam) {
-                            console.log('found team URL: ', team.members_url);
-                            let teamMemberURL = team.members_url.replace("{/member}", `/${profile.username}`);
-                            console.log('using team URL: ', teamMemberURL);
-                            request({
-                                    url: teamMemberURL,
-                                    headers: {
-                                        'User-Agent': 'toggles-admin',
-                                        'Authorization': 'Bearer ' + accessToken
-                                    }
-                                },
-                                function(error, response, body) {
-                                    if (error) {
-                                        console.error('access to GH team failed:', error);
-                                        return done(error, null);
-                                    } else if (response.statusCode != 204) {
-                                        console.error('access to GH team failed: ', response.statusCode, response.body);
-                                        return done(response.body, null);
-                                    }
-                                    // user belongs to the org/team
-                                    done(null,
-                                        new User({
-                                            name: profile.displayName,
-                                            email: profile.emails[0].value,
-                                        })
-                                    );
-                                }
-                            );
-                        }
-                    });
-                }
+            let user = new User({
+                name: profile.displayName,
+                email: profile.emails[0].value,
+            });
+            user['accessToken'] = accessToken;
+            done(
+                null,
+                user
             );
         }
     )
@@ -94,18 +47,83 @@ function enableGitHubOAuth(app) {
 
     app.get('/api/admin/login', passport.authenticate('github'));
     let context = process.env.TOGGLES_CONTEXT ? process.env.TOGGLES_CONTEXT : '';
+ 
+    function authorize(req, res, next) {
+        if (req.user && req.user['accessToken']) {
+            let accessToken = req.user['accessToken'];
+            let githubOrg = process.env.GITHUB_ORG ? process.env.GITHUB_ORG : 'rhdt-toggles-test';
+            let githubOrgTeam = process.env.GITHUB_ORG_TEAM ? process.env.GITHUB_ORG : 'toggles-admin-test';
 
-    app.get(
-        '/api/auth/callback',
+            // Successful authentication, now check if the authenticated user is a member of the GH org/team
+            console.log(`Fetching teams on https://api.github.com/orgs/${githubOrg}/teams with access token ${accessToken}`);
+            request({
+                    url: `https://api.github.com/orgs/${githubOrg}/teams`,
+                    headers: {
+                        'User-Agent': 'toggles-admin',
+                        'Authorization': 'Bearer ' + accessToken
+                    }
+                },
+                function(error, response, body) {
+                    if (error) {
+                        console.error('access to GH org failed:', error);
+                        res.status(403).render();
+                        return;
+                    } else if (response.statusCode != 200) {
+                        console.error('access to GH org failed: ', response.statusCode, response.body);
+                        res.status(403).send({ error: response.body }); //redirect(`${context}/error/`);//send({ error: response.body });
+                        return;
+                    }
+                    console.log('access to GH org done. Server responded with:', response.body);
+                    let jsonBody = JSON.parse(response.body)
+                    jsonBody.forEach(team => {
+                        if (team.name == githubOrgTeam) {
+                            console.log('found team URL: ', team.members_url);
+                            let teamMemberURL = team.members_url.replace("{/member}", `/${profile.username}`);
+                            console.log('using team URL: ', teamMemberURL);
+                            request({
+                                    url: teamMemberURL,
+                                    headers: {
+                                        'User-Agent': 'toggles-admin',
+                                        'Authorization': 'Bearer ' + accessToken
+                                    }
+                                },
+                                function(error, response, body) {
+                                    if (error) {
+                                        console.error('access to GH team failed:', error);
+                                        res.status(403).render();
+                                        return;
+                                    } else if (response.statusCode != 204) {
+                                        console.error('access to GH team failed: ', response.statusCode, response.body);
+                                        res.status(403).render();
+                                        return;
+                                    }
+                                    // user belongs to the org/team
+                                    // redirect
+                                    res.redirect(`${context}/`);
+                                }
+                            );
+                        }
+                    });
+                }
+            );
+        } else {
+            // NON authz
+        } 
+    };
+    app.get(`/error/`, (req, res, next) => {
+        res.render({err: res})
+    })
+    app.get( '/api/auth/callback',
         passport.authenticate('github', {
-            failureRedirect: `${context}/api/admin/error-login`,
+            failureRedirect: `${context}/api/admin/login`,
+            failureFlash: true
         }),
-        (req, res) => {
-            // redirect to toggles admin app.
-            res.redirect(`${context}/`);
-        });
-
-    app.use('/api/admin/', (req, res, next) => {
+        (req, res, next) => {
+            //res.redirect(`${context}/`);
+            next();
+        }, authorize);
+    
+    function ensureAuthenticated(req, res, next) {
         if (req.user) {
             next();
         } else {
@@ -122,7 +140,9 @@ function enableGitHubOAuth(app) {
                 )
                 .end();
         }
-    });
+    }
+
+    app.use('/api/admin/', ensureAuthenticated, authorize);
 }
 
 module.exports = enableGitHubOAuth;
