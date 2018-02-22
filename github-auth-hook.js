@@ -22,12 +22,10 @@ passport.use(
             let user = new User({
                 name: profile.displayName,
                 email: profile.emails[0].value,
+                username: profile.username,
+                accessToken: accessToken
             });
-            user['accessToken'] = accessToken;
-            done(
-                null,
-                user
-            );
+            done(null, user);
         }
     )
 );
@@ -78,7 +76,7 @@ function enableGitHubOAuth(app) {
                     jsonBody.forEach(team => {
                         if (team.name == githubOrgTeam) {
                             console.log('found team URL: ', team.members_url);
-                            let teamMemberURL = team.members_url.replace("{/member}", `/${profile.username}`);
+                            let teamMemberURL = team.members_url.replace("{/member}", `/${user.username}`);
                             console.log('using team URL: ', teamMemberURL);
                             request({
                                     url: teamMemberURL,
